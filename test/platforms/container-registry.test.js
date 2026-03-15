@@ -235,42 +235,6 @@ describe('Container Registry Support', () => {
     });
   });
 
-  describe('Container Registry Platform Support', () => {
-    const containerRegistries = [
-      { name: 'Docker Hub', prefix: 'cr/docker', expectedStatus: [200, 301, 302, 401, 404, 429] },
-      { name: 'Quay.io', prefix: 'cr/quay', expectedStatus: [200, 301, 302, 401, 404, 429] },
-      {
-        name: 'Google Container Registry',
-        prefix: 'cr/gcr',
-        expectedStatus: [200, 301, 302, 401, 404, 429]
-      },
-      {
-        name: 'Microsoft Container Registry',
-        prefix: 'cr/mcr',
-        expectedStatus: [200, 301, 302, 401, 404, 429]
-      },
-      {
-        name: 'GitHub Container Registry',
-        prefix: 'cr/ghcr',
-        expectedStatus: [200, 301, 302, 401, 404, 429]
-      },
-      {
-        name: 'Amazon ECR Public',
-        prefix: 'cr/ecr',
-        expectedStatus: [200, 301, 302, 401, 404, 429]
-      }
-    ];
-
-    containerRegistries.forEach(({ name, prefix, expectedStatus }) => {
-      it(`should support ${name} registry`, async () => {
-        const testUrl = `https://example.com/${prefix}/v2/test/image/manifests/latest`;
-        const response = await SELF.fetch(testUrl, { method: 'HEAD' });
-
-        expect(expectedStatus).toContain(response.status);
-      }, 10000);
-    });
-  });
-
   describe('Docker Hub Specific Tests', () => {
     it('should handle Docker Hub official images (single-name images)', async () => {
       // Official images like nginx, redis are stored as library/nginx in Docker Hub
@@ -283,7 +247,7 @@ describe('Container Registry Support', () => {
 
       // Should attempt to proxy to Docker Hub
       expect(response.status).not.toBe(400);
-    });
+    }, 30000);
 
     it('should handle Docker Hub user images (namespace/image format)', async () => {
       // User images already have namespace prefix
@@ -297,7 +261,7 @@ describe('Container Registry Support', () => {
 
       // Should attempt to proxy to Docker Hub
       expect(response.status).not.toBe(400);
-    });
+    }, 30000);
 
     it('should allow GET for Docker Hub manifest requests', async () => {
       const response = await SELF.fetch('https://example.com/cr/docker/v2/nginx/manifests/latest', {

@@ -31,7 +31,22 @@ npm run lint:fix         # Fix linting issues
 npm run format           # Format code with Prettier
 npm run format:check     # Check formatting without changes
 npm run type-check       # TypeScript type checking (no emit)
+npm run commitlint       # Validate the latest commit message
 ```
+
+## Commit Messages
+
+- Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for every commit
+- Preferred format: `type(scope): description`
+- Common types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `chore`
+- The repository installs a `commit-msg` hook via `npm install`; do not bypass it unless explicitly required
+
+## Pre-Commit Requirements
+
+- Before every commit, run the local CI-equivalent checks from `.github/workflows/ci.yml`
+- Required commands: `npm run lint`, `npm run format:check`, `npm run test:run`, and `npm run type-check`
+- If any required check fails, do not commit until the failure is resolved
+- Apply this rule to every commit, including documentation-only changes, unless the user explicitly asks for a different workflow
 
 ### Testing Workflow
 

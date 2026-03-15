@@ -28,6 +28,59 @@ import { isGitLFSRequest, isGitRequest } from '../protocols/git.js';
 import { isHuggingFaceAPIRequest } from '../protocols/huggingface.js';
 
 /**
+ * Best-effort decode for security validation.
+ *
+ * URL.pathname may keep some reserved characters percent-encoded (e.g. %2F).
+ * We decode a couple of times to catch traversal attempts like %2e%2e%2f.
+ * @param {string} pathname
+ * @returns {{ok: true, value: string} | {ok: false}} Decoded path result
+ */
+function decodePathnameForValidation(pathname) {
+  let decoded = pathname;
+  for (let i = 0; i < 2; i++) {
+    if (!/%[0-9a-fA-F]{2}/.test(decoded)) {
+      break;
+    }
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+      return { ok: false };
+    }
+  }
+  return { ok: true, value: decoded };
+}
+
+/**
+ * Detects directory traversal patterns in a URL path.
+ * @param {string} pathname
+ * @returns {boolean} True if traversal is detected
+ */
+function hasPathTraversal(pathname) {
+  const decodedResult = decodePathnameForValidation(pathname);
+  if (!decodedResult.ok) {
+    return true;
+  }
+
+  const decoded = decodedResult.value.replace(/\\/g, '/');
+  return /(^|\/)\.\.(\/|$)/.test(decoded);
+}
+
+/**
+ * Checks for ASCII control characters.
+ * @param {string} value
+ * @returns {boolean} True if ASCII control chars are present
+ */
+function hasAsciiControlChars(value) {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 31 || code === 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Detects if a request is a container registry operation (Docker/OCI).
  *
  * Identifies Docker and OCI registry requests by checking for:
@@ -39,34 +92,39 @@ import { isHuggingFaceAPIRequest } from '../protocols/huggingface.js';
  * @returns {boolean} True if this is a container registry operation
  */
 export function isDockerRequest(request, url) {
+  const { pathname } = url;
+
   // Check for container registry API endpoints
-  if (url.pathname.includes('/v2/') || url.pathname === '/v2') {
+  if (pathname === '/v2' || pathname === '/v2/' || pathname.startsWith('/v2/')) {
     return true;
   }
 
-  // Check for Docker-specific User-Agent
-  const userAgent = request.headers.get('User-Agent') || '';
-  if (userAgent.toLowerCase().includes('docker/')) {
-    return true;
-  }
+  if (pathname.startsWith('/cr/')) {
+    if (/^\/cr\/[^/]+\/v2(?:\/|$)/.test(pathname)) {
+      return true;
+    }
 
-  // Check for Docker-specific Accept headers
-  const accept = request.headers.get('Accept') || '';
-  if (
-    accept.includes('application/vnd.docker.distribution.manifest') ||
-    accept.includes('application/vnd.oci.image.manifest') ||
-    accept.includes('application/vnd.docker.image.rootfs.diff.tar.gzip')
-  ) {
-    return true;
-  }
+    const userAgent = request.headers.get('User-Agent') || '';
+    if (userAgent.toLowerCase().includes('docker/')) {
+      return true;
+    }
 
-  // Check for Docker-specific Content-Type headers (for PUT/POST)
-  const contentType = request.headers.get('Content-Type') || '';
-  if (
-    contentType.includes('application/vnd.docker.distribution.manifest') ||
-    contentType.includes('application/vnd.oci.image.manifest')
-  ) {
-    return true;
+    const accept = request.headers.get('Accept') || '';
+    if (
+      accept.includes('application/vnd.docker.distribution.manifest') ||
+      accept.includes('application/vnd.oci.image.manifest') ||
+      accept.includes('application/vnd.docker.image.rootfs.diff.tar.gzip')
+    ) {
+      return true;
+    }
+
+    const contentType = request.headers.get('Content-Type') || '';
+    if (
+      contentType.includes('application/vnd.docker.distribution.manifest') ||
+      contentType.includes('application/vnd.oci.image.manifest')
+    ) {
+      return true;
+    }
   }
 
   return false;
@@ -74,6 +132,25 @@ export function isDockerRequest(request, url) {
 
 // Re-export for standard usage
 export { isAIInferenceRequest, isGitLFSRequest, isGitRequest, isHuggingFaceAPIRequest };
+
+/**
+ * Computes the allowed methods for a request based on protocol detection.
+ * @param {Request} request
+ * @param {URL} url
+ * @param {import('../config/index.js').ApplicationConfig} config
+ * @returns {string[]} Allowed HTTP methods for this request shape.
+ */
+export function getAllowedMethods(request, url, config = CONFIG) {
+  const isGit = isGitRequest(request, url);
+  const isGitLFS = isGitLFSRequest(request, url);
+  const isDocker = isDockerRequest(request, url);
+  const isAI = isAIInferenceRequest(request, url);
+  const isHF = isHuggingFaceAPIRequest(request, url);
+
+  return isGit || isGitLFS || isDocker || isAI || isHF
+    ? ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
+    : config.SECURITY.ALLOWED_METHODS;
+}
 
 /**
  * Validates incoming requests against security rules.
@@ -91,17 +168,7 @@ export { isAIInferenceRequest, isGitLFSRequest, isGitRequest, isHuggingFaceAPIRe
  * @returns {{valid: boolean, error?: string, status?: number}} Validation result object
  */
 export function validateRequest(request, url, config = CONFIG) {
-  // Allow POST method for Git, Git LFS, Docker, AI inference, and HF API operations
-  const isGit = isGitRequest(request, url);
-  const isGitLFS = isGitLFSRequest(request, url);
-  const isDocker = isDockerRequest(request, url);
-  const isAI = isAIInferenceRequest(request, url);
-  const isHF = isHuggingFaceAPIRequest(request, url);
-
-  const allowedMethods =
-    isGit || isGitLFS || isDocker || isAI || isHF
-      ? ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
-      : config.SECURITY.ALLOWED_METHODS;
+  const allowedMethods = getAllowedMethods(request, url, config);
 
   if (!allowedMethods.includes(request.method)) {
     return { valid: false, error: 'Method not allowed', status: 405 };
@@ -109,6 +176,26 @@ export function validateRequest(request, url, config = CONFIG) {
 
   if (url.pathname.length > config.SECURITY.MAX_PATH_LENGTH) {
     return { valid: false, error: 'Path too long', status: 414 };
+  }
+
+  // Reject obvious traversal in the raw URL path (before URL normalization).
+  // Some runtimes normalize `..` segments when parsing URL.pathname.
+  const rawPathname = request.url.startsWith(url.origin)
+    ? request.url.slice(url.origin.length).split('?')[0].split('#')[0].replace(/\\/g, '/')
+    : url.pathname;
+
+  if (/(^|\/)\.\.(\/|$)/.test(rawPathname)) {
+    return { valid: false, error: 'Invalid path', status: 400 };
+  }
+
+  // Reject control characters and directory traversal attempts.
+  // This protects both our routing logic and upstream requests.
+  if (hasAsciiControlChars(url.pathname)) {
+    return { valid: false, error: 'Invalid path', status: 400 };
+  }
+
+  if (hasPathTraversal(url.pathname)) {
+    return { valid: false, error: 'Invalid path', status: 400 };
   }
 
   return { valid: true };

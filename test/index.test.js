@@ -92,6 +92,21 @@ describe('Xget Core Functionality', () => {
       // Should attempt to proxy to conda
       expect(response.status).not.toBe(400);
     });
+
+    it('should handle Flathub URLs correctly', async () => {
+      const testUrl = 'https://example.com/flathub/repo/summary';
+      const response = await SELF.fetch(testUrl, { method: 'HEAD' });
+
+      // Should attempt to proxy to Flathub
+      expect(response.status).not.toBe(400);
+    });
+
+    it('should not treat nested /v2/ path segments as container registry requests', async () => {
+      const testUrl = 'https://example.com/gh/microsoft/vscode/releases/download/v2/file.tar.gz';
+      const response = await SELF.fetch(testUrl, { method: 'HEAD' });
+
+      expect(response.status).not.toBe(400);
+    });
   });
 
   describe('HTTP Method Validation', () => {
@@ -122,6 +137,18 @@ describe('Xget Core Functionality', () => {
     it('should reject DELETE requests', async () => {
       const response = await SELF.fetch('https://example.com/gh/test/repo/file.txt', {
         method: 'DELETE'
+      });
+
+      expect(response.status).toBe(405);
+    });
+
+    it('should reject AI-like POST requests outside /ip providers', async () => {
+      const response = await SELF.fetch('https://example.com/gh/test/repo/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ message: 'test' })
       });
 
       expect(response.status).toBe(405);
@@ -178,7 +205,7 @@ describe('Xget Core Functionality', () => {
 
     it('should accept normal length paths', async () => {
       const normalPath = '/gh/microsoft/vscode/archive/refs/heads/main.zip';
-      const response = await SELF.fetch(`https://example.com${normalPath}`);
+      const response = await SELF.fetch(`https://example.com${normalPath}`, { method: 'HEAD' });
 
       expect(response.status).not.toBe(414);
     });
@@ -186,13 +213,17 @@ describe('Xget Core Functionality', () => {
 
   describe('Performance Headers', () => {
     it('should include performance metrics in response headers', async () => {
-      const response = await SELF.fetch('https://example.com/gh/test/repo/file.txt');
+      const response = await SELF.fetch('https://example.com/gh/test/repo/file.txt', {
+        method: 'HEAD'
+      });
 
       expect(response.headers.get('X-Performance-Metrics')).toBeTruthy();
     });
 
     it('should include valid JSON in performance metrics', async () => {
-      const response = await SELF.fetch('https://example.com/gh/test/repo/file.txt');
+      const response = await SELF.fetch('https://example.com/gh/test/repo/file.txt', {
+        method: 'HEAD'
+      });
       const metricsHeader = response.headers.get('X-Performance-Metrics');
 
       expect(metricsHeader).toBeTruthy();
@@ -204,7 +235,7 @@ describe('Xget Core Functionality', () => {
     it('should rewrite npm registry URLs in JSON responses', async () => {
       // Mock npm package metadata request
       const testUrl = 'https://example.com/npm/lodash';
-      const response = await SELF.fetch(testUrl);
+      const response = await SELF.fetch(testUrl, { method: 'HEAD' });
 
       // This test would need actual npm registry response mocking
       // For now, just verify the request doesn't fail
